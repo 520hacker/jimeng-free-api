@@ -10,4 +10,5 @@ export default {
     API_IMAGE_GENERATION_FAILED: [-2007, '图像生成失败'],
     API_VIDEO_GENERATION_FAILED: [-2008, '视频生成失败'],
     API_IMAGE_GENERATION_INSUFFICIENT_POINTS: [-2009, '即梦积分不足'],
+    API_IMAGE_UPLOAD_FAILED: [-2010, '图片上传失败'],
 }

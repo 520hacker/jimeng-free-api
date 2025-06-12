@@ -8,7 +8,7 @@ import util from "@/lib/util.ts";
 import { generateImages, DEFAULT_MODEL } from "./images.ts";
 
 // 最大重试次数
-const MAX_RETRY_COUNT = 3;
+const MAX_RETRY_COUNT = 0;
 // 重试延迟
 const RETRY_DELAY = 5000;
 

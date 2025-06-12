@@ -250,6 +250,370 @@ export async function generateImages(
   });
 }
 
+/*
+const result = await generateImagesWithReference(
+  "jimeng-3.0",
+  "你的提示词",
+  "参考图片URI",
+  {
+    width: 1024,
+    height: 1024,
+    sampleStrength: 0.5,
+    referenceStrength: 0.5,
+    negativePrompt: "负面提示词"
+  },
+  refreshToken
+);
+这个新函数保持了与原有 generateImages 函数相同的错误处理和返回格式，同时添加了对参考图片的支持。返回的仍然是生成的图片 URL 数组。
+需要注意的是，参考图片的 URI 需要是已经上传到系统的图片 URI，格式类似于示例中的 "tos-cn-i-tb4s082cfz/58b6aaa801a44783b7ab85772332d006"。
+*/
+
+export async function generateImagesWithReference(
+  _model: string,
+  prompt: string,
+  referenceImageUri: string,
+  {
+    width = 1024,
+    height = 1024,
+    sampleStrength = 0.5,
+    referenceStrength = 0.5,
+    negativePrompt = "",
+  }: {
+    width?: number;
+    height?: number;
+    sampleStrength?: number;
+    referenceStrength?: number;
+    negativePrompt?: string;
+  },
+  refreshToken: string
+) {
+  const model = getModel(_model);
+  logger.info(`使用模型: ${_model} 映射模型: ${model} ${width}x${height} 精细度: ${sampleStrength} 参考图强度: ${referenceStrength}`);
+
+  const { totalCredit } = await getCredit(refreshToken);
+  if (totalCredit <= 0)
+    await receiveCredit(refreshToken);
+
+  const componentId = util.uuid();
+  const { aigc_data } = await request(
+    "post",
+    "/mweb/v1/aigc_draft/generate",
+    refreshToken,
+    {
+      params: {
+        babi_param: encodeURIComponent(
+          JSON.stringify({
+            scenario: "image_video_generation",
+            feature_key: "to_image_referenceimage_generate",
+            feature_entrance: "to_image",
+            feature_entrance_detail: "to_image-referenceimage-byte_edit",
+          })
+        ),
+      },
+      data: {
+        extend: {
+          root_model: model,
+          template_id: "",
+        },
+        submit_id: util.uuid(),
+        metrics_extra: JSON.stringify({
+          templateId: "",
+          generateCount: 1,
+          promptSource: "custom",
+          templateSource: "",
+          lastRequestId: "",
+          originRequestId: "",
+        }),
+        draft_content: JSON.stringify({
+          type: "draft",
+          id: util.uuid(),
+          min_version: "3.2.5",
+          is_from_tsn: true,
+          version: "3.2.5",
+          main_component_id: componentId,
+          component_list: [
+            {
+              type: "image_base_component",
+              id: componentId,
+              min_version: "3.0.2",
+              metadata: {
+                type: "",
+                id: util.uuid(),
+                created_platform: 3,
+                created_platform_version: "",
+                created_time_in_ms: Date.now().toString(),
+                created_did: "",
+              },
+              generate_type: "blend",
+              aigc_mode: "workbench",
+              abilities: {
+                type: "",
+                id: util.uuid(),
+                blend: {
+                  type: "",
+                  id: util.uuid(),
+                  min_version: "3.2.5",
+                  min_features: [],
+                  core_param: {
+                    type: "",
+                    id: util.uuid(),
+                    model,
+                    prompt,
+                    negative_prompt: negativePrompt,
+                    sample_strength: sampleStrength,
+                    image_ratio: 1,
+                    large_image_info: {
+                      type: "",
+                      id: util.uuid(),
+                      height,
+                      width,
+                      resolution_type: "1k",
+                    },
+                  },
+                  ability_list: [
+                    {
+                      type: "",
+                      id: util.uuid(),
+                      name: "byte_edit",
+                      image_uri_list: [referenceImageUri],
+                      image_list: [
+                        {
+                          type: "image",
+                          id: util.uuid(),
+                          source_from: "upload",
+                          platform_type: 1,
+                          name: "",
+                          image_uri: referenceImageUri,
+                          width: 0,
+                          height: 0,
+                          format: "",
+                          uri: referenceImageUri,
+                        },
+                      ],
+                      strength: referenceStrength,
+                    },
+                  ],
+                  history_option: {
+                    type: "",
+                    id: util.uuid(),
+                  },
+                  prompt_placeholder_info_list: [
+                    {
+                      type: "",
+                      id: util.uuid(),
+                      ability_index: 0,
+                    },
+                  ],
+                  postedit_param: {
+                    type: "",
+                    id: util.uuid(),
+                    generate_type: 0,
+                  },
+                },
+              },
+            },
+          ],
+        }),
+        http_common_info: {
+          aid: Number(DEFAULT_ASSISTANT_ID),
+        },
+      },
+    }
+  );
+
+  const historyId = aigc_data.history_record_id;
+  if (!historyId)
+    throw new APIException(EX.API_IMAGE_GENERATION_FAILED, "记录ID不存在");
+  let status = 20, failCode, item_list = [];
+  while (status === 20) {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    const result = await request("post", "/mweb/v1/get_history_by_ids", refreshToken, {
+      data: {
+        history_ids: [historyId],
+        image_info: {
+          width: 2048,
+          height: 2048,
+          format: "webp",
+          image_scene_list: [
+            {
+              scene: "smart_crop",
+              width: 360,
+              height: 360,
+              uniq_key: "smart_crop-w:360-h:360",
+              format: "webp",
+            },
+            {
+              scene: "smart_crop",
+              width: 480,
+              height: 480,
+              uniq_key: "smart_crop-w:480-h:480",
+              format: "webp",
+            },
+            {
+              scene: "smart_crop",
+              width: 720,
+              height: 720,
+              uniq_key: "smart_crop-w:720-h:720",
+              format: "webp",
+            },
+            {
+              scene: "smart_crop",
+              width: 720,
+              height: 480,
+              uniq_key: "smart_crop-w:720-h:480",
+              format: "webp",
+            },
+            {
+              scene: "smart_crop",
+              width: 360,
+              height: 240,
+              uniq_key: "smart_crop-w:360-h:240",
+              format: "webp",
+            },
+            {
+              scene: "smart_crop",
+              width: 240,
+              height: 320,
+              uniq_key: "smart_crop-w:240-h:320",
+              format: "webp",
+            },
+            {
+              scene: "smart_crop",
+              width: 480,
+              height: 640,
+              uniq_key: "smart_crop-w:480-h:640",
+              format: "webp",
+            },
+            {
+              scene: "normal",
+              width: 2400,
+              height: 2400,
+              uniq_key: "2400",
+              format: "webp",
+            },
+            {
+              scene: "normal",
+              width: 1080,
+              height: 1080,
+              uniq_key: "1080",
+              format: "webp",
+            },
+            {
+              scene: "normal",
+              width: 720,
+              height: 720,
+              uniq_key: "720",
+              format: "webp",
+            },
+            {
+              scene: "normal",
+              width: 480,
+              height: 480,
+              uniq_key: "480",
+              format: "webp",
+            },
+            {
+              scene: "normal",
+              width: 360,
+              height: 360,
+              uniq_key: "360",
+              format: "webp",
+            },
+          ],
+        },
+        http_common_info: {
+          aid: Number(DEFAULT_ASSISTANT_ID),
+        },
+      },
+    });
+    if (!result[historyId])
+      throw new APIException(EX.API_IMAGE_GENERATION_FAILED, "记录不存在");
+    status = result[historyId].status;
+    failCode = result[historyId].fail_code;
+    item_list = result[historyId].item_list;
+  }
+  if (status === 30) {
+    if (failCode === '2038')
+      throw new APIException(EX.API_CONTENT_FILTERED);
+    else
+      throw new APIException(EX.API_IMAGE_GENERATION_FAILED);
+  }
+  return item_list.map((item) => {
+    if(!item?.image?.large_images?.[0]?.image_url)
+      return item?.common_attr?.cover_url || null;
+    return item.image.large_images[0].image_url;
+  });
+}
+/*
+// 1. 首先上传参考图片
+const referenceImageUri = await uploadReferenceImage(file, refreshToken);
+
+// 2. 然后使用参考图片生成新图片
+const result = await generateImagesWithReference(
+  "jimeng-3.0",
+  "你的提示词",
+  referenceImageUri,
+  {
+    width: 1024,
+    height: 1024,
+    sampleStrength: 0.5,
+    referenceStrength: 0.5,
+    negativePrompt: "负面提示词"
+  },
+  refreshToken
+);
+*/
+export async function uploadReferenceImage(
+  file: File | Blob,
+  refreshToken: string
+): Promise<string> {
+  // 获取文件大小
+  const fileSize = file instanceof File ? file.size : file.size;
+  
+  // 第一步：申请上传
+  const applyResult = await request(
+    "get",
+    "https://imagex.bytedanceapi.com/",
+    refreshToken,
+    {
+      params: {
+        Action: "ApplyImageUpload",
+        Version: "2018-08-01",
+        ServiceId: "tb4s082cfz",
+        FileSize: fileSize,
+        s: "y79790vuz0k"
+      }
+    }
+  );
+
+  if (!applyResult?.Result?.UploadAddress?.StoreInfos?.[0]?.StoreUri) {
+    throw new APIException(EX.API_IMAGE_UPLOAD_FAILED, "获取上传地址失败");
+  }
+
+  const storeUri = applyResult.Result.UploadAddress.StoreInfos[0].StoreUri;
+  const uploadHost = applyResult.Result.UploadAddress.UploadHosts[0];
+  const auth = applyResult.Result.UploadAddress.StoreInfos[0].Auth;
+
+  // 第二步：上传文件
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("Authorization", auth);
+
+  const uploadResult = await fetch(`https://${uploadHost}/upload`, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!uploadResult.ok) {
+    throw new APIException(EX.API_IMAGE_UPLOAD_FAILED, "上传文件失败");
+  }
+
+  // 返回图片 URI
+  return storeUri;
+}
+
 export default {
   generateImages,
+  generateImagesWithReference,
+  uploadReferenceImage,
 };
