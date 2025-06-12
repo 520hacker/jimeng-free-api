@@ -5,7 +5,7 @@ import APIException from "@/lib/exceptions/APIException.ts";
 import EX from "@/api/consts/exceptions.ts";
 import logger from "@/lib/logger.ts";
 import util from "@/lib/util.ts";
-import { generateImages, DEFAULT_MODEL } from "./images.ts";
+import { generateImages, generateImagesWithReference, uploadReferenceImage, DEFAULT_MODEL } from "./images.ts";
 
 // 最大重试次数
 const MAX_RETRY_COUNT = 0;
@@ -29,6 +29,31 @@ function parseModel(model: string) {
 }
 
 /**
+ * 检查内容是否包含图片URL
+ * 
+ * @param content 消息内容
+ * @returns 图片URL和剩余提示词
+ */
+async function parseImageContent(content: string): Promise<{ imageUrl?: string; prompt: string; blob?: Blob }> {
+  const imageUrlMatch = content.match(/^(https?:\/\/[^\s]+\.(jpg|jpeg|png|webp))/i);
+  if (!imageUrlMatch) {
+    return { prompt: content };
+  }
+
+  const imageUrl = imageUrlMatch[0];
+  const prompt = content.slice(imageUrl.length).trim();
+  
+  // 下载图片
+  const response = await fetch(imageUrl);
+  if (!response.ok) {
+    throw new APIException(EX.API_FILE_URL_INVALID, `无法下载图片: ${imageUrl}`);
+  }
+  
+  const blob = await response.blob();
+  return { imageUrl, prompt, blob };
+}
+
+/**
  * 同步对话补全
  *
  * @param messages 参考gpt系列消息格式，多轮对话请完整提供上下文
@@ -49,15 +74,38 @@ export async function createCompletion(
     const { model, width, height } = parseModel(_model);
     logger.info(messages);
 
-    const imageUrls = await generateImages(
-      model,
-      messages[messages.length - 1].content,
-      {
-        width,
-        height,
-      },
-      refreshToken
-    );
+    const lastMessage = messages[messages.length - 1].content;
+    const { imageUrl, prompt, blob } = await parseImageContent(lastMessage);
+
+    let imageUrls;
+    if (imageUrl && blob) {
+      // 上传参考图片
+      const referenceImageUri = await uploadReferenceImage(blob, refreshToken);
+      // 使用参考图片生成
+      imageUrls = await generateImagesWithReference(
+        model,
+        prompt,
+        referenceImageUri,
+        {
+          width,
+          height,
+          sampleStrength: 0.5,
+          referenceStrength: 0.5,
+        },
+        refreshToken
+      );
+    } else {
+      // 普通生成
+      imageUrls = await generateImages(
+        model,
+        prompt,
+        {
+          width,
+          height,
+        },
+        refreshToken
+      );
+    }
 
     return {
       id: util.uuid(),
@@ -92,6 +140,17 @@ export async function createCompletion(
   });
 }
 
+/*
+// 普通生成
+await createCompletion([
+  { role: "user", content: "生成一张猫的图片" }
+], refreshToken);
+
+// 使用参考图片生成
+await createCompletion([
+  { role: "user", content: "https://example.com/cat.jpg 生成一张类似的猫的图片" }
+], refreshToken);
+*/
 /**
  * 流式对话补全
  *
@@ -135,12 +194,37 @@ export async function createCompletionStream(
         "\n\n"
     );
 
-    generateImages(
-      model,
-      messages[messages.length - 1].content,
-      { width, height },
-      refreshToken
-    )
+    const lastMessage = messages[messages.length - 1].content;
+    const { imageUrl, prompt, blob } = await parseImageContent(lastMessage);
+
+    let imagePromise;
+    if (imageUrl && blob) {
+      // 上传参考图片
+      const referenceImageUri = await uploadReferenceImage(blob, refreshToken);
+      // 使用参考图片生成
+      imagePromise = generateImagesWithReference(
+        model,
+        prompt,
+        referenceImageUri,
+        {
+          width,
+          height,
+          sampleStrength: 0.5,
+          referenceStrength: 0.5,
+        },
+        refreshToken
+      );
+    } else {
+      // 普通生成
+      imagePromise = generateImages(
+        model,
+        prompt,
+        { width, height },
+        refreshToken
+      );
+    }
+
+    imagePromise
       .then((imageUrls) => {
         for (let i = 0; i < imageUrls.length; i++) {
           const url = imageUrls[i];
